@@ -142,6 +142,9 @@ export function purgeEntries(index, ids) {
   return hit ? changed(index, index.files.filter((f) => !(set.has(f.id) && !isLive(f)))) : null;
 }
 
+/** Файлы из корзины, которые purgeEntries уберёт: нужны вызывающему, чтобы взять их chat_messages ДО удаления из индекса. */
+export const purgeTargets = (index, ids) => index.files.filter((f) => ids.includes(f.id) && !isLive(f));
+
 export const emptyTrash = (index) => purgeEntries(index, index.files.filter((f) => !isLive(f)).map((f) => f.id));
 
 /**
@@ -187,6 +190,16 @@ export function touchOpened(index, id, now, gap = OPENED_COALESCE_SECONDS) {
   const file = index.files.find((f) => f.id === id);
   if (!file || (file.opened_at && now - file.opened_at < gap)) return null;
   return changed(index, index.files.map((f) => (f.id === id ? { ...f, opened_at: now } : f)));
+}
+
+/** «Открыть в чате»: бот прислал копию `messageId`. Одна мутация с opened_at; прежнюю копию (если её удалили в чате) убираем из chat_messages. */
+export function recordSent(index, id, messageId, now, { removedPrevious = false } = {}) {
+  const file = index.files.find((f) => f.id === id);
+  if (!file) return null;
+  const prev = file.sent_message_id ?? null;
+  const kept = (file.chat_messages ?? []).filter((m) => !(removedPrevious && m === prev) && m !== messageId);
+  const next = { ...file, opened_at: now, sent_message_id: messageId ?? prev, chat_messages: messageId == null ? file.chat_messages ?? [] : [...kept, messageId] };
+  return changed(index, index.files.map((f) => (f.id === id ? next : f)));
 }
 
 const lastTouched = (f) => Math.max(f.opened_at ?? 0, f.created_at ?? 0);

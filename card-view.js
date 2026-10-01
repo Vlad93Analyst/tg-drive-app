@@ -5,8 +5,8 @@ import { fileSheet } from './actions.js';
 import { typeIcon } from './file-row.js';
 import { go, register } from './nav.js';
 import { commit, state } from './state.js';
-import { downloadToDevice, sendToBotChat, shareToAnyChat } from './transfer.js';
-import { atLeast, haptic } from './tg.js';
+import { downloadToDevice, openFile, shareToAnyChat } from './transfer.js';
+import { haptic } from './tg.js';
 import { $, chip, formatDate, formatSize, guard, toast } from './ui.js';
 
 function renderMeta(file) {
@@ -35,9 +35,9 @@ function enter(file) {
   $('c-name').textContent = file.file_name;
   const preview = $('c-preview'); preview.replaceChildren(typeIcon(file));
   renderMeta(file); renderTags(file);
-  const canGet = atLeast('8.0');
-  $('c-download').hidden = !canGet; $('c-download').disabled = !canDownload(file);
-  $('c-download-hint').hidden = !canGet || canDownload(file);
+  // До 8.0 нативного скачивания нет, но startDownload откроет файл во внешнем браузере — кнопка нужна всегда.
+  $('c-download').hidden = false; $('c-download').disabled = !canDownload(file);
+  $('c-download-hint').hidden = canDownload(file);
   $('c-note').value = file.note;
 }
 
@@ -47,7 +47,7 @@ export function initCard() {
   const redrawList = state.onChange;
   state.onChange = () => { redrawList(); if (state.screen === 'card') { if (state.current) enter(state.current); else go('list'); } };
   const withCurrent = (fn) => guard(() => fn(state.current));
-  $('c-open').onclick = withCurrent(sendToBotChat);
+  $('c-open').onclick = withCurrent(openFile);
   $('c-share').onclick = withCurrent(shareToAnyChat);
   $('c-download').onclick = withCurrent(downloadToDevice);
   $('c-more').onclick = withCurrent(fileSheet);

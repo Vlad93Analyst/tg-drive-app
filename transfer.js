@@ -1,6 +1,6 @@
 // Отправка и скачивание файла + пометка «открыт» для «Недавних».
-import { canDownload, idQuery, preparedMessageParams, sendMethodForKind } from './core.js';
-import { touchOpened } from './drive.js';
+import { canDownload, idQuery, preparedMessageParams, sendMethodForKind, startDownload } from './core.js';
+import { recordSent, touchOpened } from './drive.js';
 import { commit, nowSeconds, state } from './state.js';
 import { atLeast, haptic, tg } from './tg.js';
 import { toast } from './ui.js';
@@ -16,11 +16,26 @@ export function markOpened(file) {
   commit((idx) => touchOpened(idx, file.id, nowSeconds()), { quiet: true }).then(() => state.onChange(), () => {});
 }
 
+/**
+ * Копия в чат + tg.close(): пользователь оказывается в чате, файл — внизу. Прежнюю копию бота удаляем (best-effort),
+ * чтобы в чате не копились дубли. Все id уходят в chat_messages — для «Удалить навсегда».
+ */
 export async function sendToBotChat(file) {
   const { method, field } = sendMethodForKind(file.kind);
-  await state.client.call(method, { chat_id: state.chatId, [field]: file.file_id });
-  haptic.success(); toast('Отправлено в чат с ботом'); markOpened(file);
+  const prev = file.sent_message_id;
+  let removedPrevious = false;
+  if (prev) {
+    try { await state.client.call('deleteMessage', { chat_id: state.chatId, message_id: prev }); removedPrevious = true; } catch { /* старше 48 ч или уже удалено — не мешает отправке */ }
+  }
+  const sent = await state.client.call(method, { chat_id: state.chatId, [field]: file.file_id });
+  haptic.success(); toast('Отправлено в чат с ботом');
+  // Запись id — до close(): после закрытия Mini App мутация не успеет.
+  await commit((idx) => recordSent(idx, file.id, sent?.message_id ?? null, nowSeconds(), { removedPrevious }), { quiet: true }).then(() => state.onChange(), () => {});
+  tg.close();
 }
+
+/** Основное «Открыть». Встроенные плеер и просмотрщик (openAction 'player'/'viewer') ещё не сделаны — пока всё в чат. */
+export const openFile = (file) => sendToBotChat(file);
 
 /** shareMessage (8.0) через savePreparedInlineMessage; на старых клиентах — switchInlineQuery (6.7) с запросом id:<n>. */
 export async function shareToAnyChat(file) {
@@ -43,8 +58,16 @@ export async function shareToAnyChat(file) {
 /** URL содержит токен бота и уходит в нативный клиент Telegram — компромисс без бэкенда. */
 export async function downloadToDevice(file) {
   if (!canDownload(file)) throw new Error('файл больше 20 МБ — откройте его в чате');
-  if (!atLeast('8.0')) throw new Error('обновите Telegram для скачивания');
   const { url } = await state.client.getFileUrl(file.file_id);
   markOpened(file);
-  tg.downloadFile({ url, file_name: file.file_name }, (accepted) => { if (accepted) toast('Загрузка запущена'); });
+  const result = await startDownload(tg, { url, file_name: file.file_name });
+  toast({ accepted: 'Загрузка запущена', declined: 'Скачивание отменено', browser: 'Открыто в браузере — файл скачается там' }[result]);
+}
+
+/** Прямой путь через внешний браузер: когда нативное скачивание молчит. */
+export async function downloadInBrowser(file) {
+  if (!canDownload(file)) throw new Error('файл больше 20 МБ — откройте его в чате');
+  const { url } = await state.client.getFileUrl(file.file_id);
+  markOpened(file);
+  tg.openLink(url); toast('Открыто в браузере — файл скачается там');
 }

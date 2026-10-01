@@ -64,6 +64,8 @@ export function extractFile(msg) {
     tags: [],
     source: sourceOf(msg.forward_origin),
     created_at: msg.date,
+    // id входящего сообщения: нужен, чтобы «Удалить навсегда» могло убрать его и из чата (best-effort, см. deleteChatMessages).
+    chat_messages: msg.message_id != null ? [msg.message_id] : [],
   };
 }
 
@@ -73,11 +75,16 @@ export const INDEX_VERSION = 2;
 export const emptyIndex = () => ({ version: INDEX_VERSION, rev: 0, updated_at: null, folders: {}, files: [] });
 
 // Поля v2 у файла: звезда, мягкое удаление (unix-секунды), последнее открытие (для «Недавних»).
-const FILE_DEFAULTS = { starred: false, trashed_at: null, opened_at: null };
+// chat_messages — id сообщений в чате с ботом (входящее + присланные по «Открыть в чате»), sent_message_id — последняя копия от бота.
+const FILE_DEFAULTS = { starred: false, trashed_at: null, opened_at: null, chat_messages: [], sent_message_id: null };
 
 /** v1 -> v2 при чтении: чистая, идемпотентная; папка Inbox остаётся, словарь `folders` ({путь: {color}}) пуст. */
 export function migrateIndex(index) {
-  if (index.version >= INDEX_VERSION) return index;
+  // Поля chat_messages/sent_message_id появились внутри v2 — дозаполняем без смены версии.
+  if (index.version >= INDEX_VERSION) {
+    return index.files.every((f) => Array.isArray(f.chat_messages) && 'sent_message_id' in f)
+      ? index : { ...index, files: index.files.map((f) => ({ ...FILE_DEFAULTS, ...f })) };
+  }
   return { ...index, version: INDEX_VERSION, folders: index.folders ?? {}, files: index.files.map((f) => ({ ...FILE_DEFAULTS, ...f })) };
 }
 
@@ -86,7 +93,14 @@ export const isTrashed = (file) => Boolean(file.trashed_at);
 /** Dedup по file_unique_id. */
 export function addEntry(index, entry) {
   const existing = index.files.find((f) => f.file_unique_id === entry.file_unique_id);
-  if (existing) return { index, created: false, entry: existing };
+  if (existing) {
+    // Повторная пересылка того же файла: само сообщение в чате всё равно лежит там — запоминаем его id.
+    const known = existing.chat_messages ?? [];
+    const fresh = (entry.chat_messages ?? []).filter((m) => !known.includes(m));
+    if (!fresh.length) return { index, created: false, entry: existing };
+    const merged = { ...existing, chat_messages: [...known, ...fresh] };
+    return { index: { ...index, files: index.files.map((f) => (f === existing ? merged : f)) }, created: false, entry: merged };
+  }
   const id = index.files.reduce((max, f) => Math.max(max, f.id), 0) + 1;
   const added = { id, ...FILE_DEFAULTS, ...entry };
   return { index: { ...index, files: [...index.files, added] }, created: true, entry: added };
@@ -223,6 +237,37 @@ export function deleteEntries(index, ids) {
 /** getFile отдаёт только до 20 MB. Неизвестный размер пробуем (ошибку getFile покажет UI). */
 export const DOWNLOAD_LIMIT_BYTES = 20 * 1024 ** 2;
 export const canDownload = (file) => file.size == null || file.size <= DOWNLOAD_LIMIT_BYTES;
+
+const isAudioFile = (f) => f.kind === 'audio' || f.kind === 'voice' || (f.kind === 'document' && /^audio\//.test(f.mime ?? ''));
+
+/**
+ * Что делает основное «Открыть»: 'player' / 'viewer' — встроенные (файл ≤20 МБ, иначе getFile не отдаст),
+ * 'chat' — отправка копии в чат бота. Неизвестный размер (null) считаем допустимым, как в canDownload.
+ */
+export function openAction(file) {
+  if (!canDownload(file)) return 'chat';
+  if (isAudioFile(file)) return 'player';
+  if (file.kind === 'photo' || file.kind === 'video') return 'viewer';
+  return 'chat';
+}
+
+/**
+ * Скачивание на устройство. Native downloadFile (Bot API 8.0) показывает попап; Telegram-сервер файлов не шлёт
+ * Content-Disposition/ACAO, которые требует дока Mini Apps, поэтому на части клиентов он может не сработать —
+ * на ошибку и на клиент <8.0 уходим в openLink (внешний браузер, файл скачивается там).
+ * Возвращает 'accepted' | 'declined' | 'browser'.
+ */
+export function startDownload(app, { url, file_name }) {
+  const viaBrowser = () => { app.openLink(url); return 'browser'; };
+  if (!app.isVersionAtLeast?.('8.0') || !app.downloadFile) return Promise.resolve(viaBrowser());
+  return new Promise((resolve) => {
+    try {
+      app.downloadFile({ url, file_name }, (accepted) => resolve(accepted ? 'accepted' : 'declined'));
+    } catch {
+      resolve(viaBrowser()); // клиент заявил 8.0, но метод бросил — это и есть случай «Скачать ничего не делает»
+    }
+  });
+}
 
 /** Параметры savePreparedInlineMessage (Bot API 8.0): готовое inline-сообщение для WebApp.shareMessage; null для video_note. */
 export function preparedMessageParams(file, userId) {
@@ -461,7 +506,7 @@ export async function pullFromChat({ call, transport, allowedIds, loadOffset, sa
       await mutateIndex(transport, (index) => {
         created = 0;
         const next = files.reduce((acc, file) => { const r = addEntry(acc, file); if (r.created) created++; return r.index; }, index);
-        return created ? next : null;
+        return next === index ? null : next; // дубль с новым message_id тоже меняет индекс
       });
       added += created;
       duplicates += files.length - created;
@@ -472,6 +517,44 @@ export async function pullFromChat({ call, transport, allowedIds, loadOffset, sa
     if (updates.length < PULL_PAGE_LIMIT) break;
   }
   return { added, duplicates };
+}
+
+// ---------- удаление сообщений в чате (best-effort) ----------
+
+export const CHAT_DELETE_WINDOW_SECONDS = 48 * 3600; // deleteMessage: «only if it was sent less than 48 hours ago»
+export const DELETE_MESSAGES_BATCH = 100; // потолок deleteMessages
+
+/**
+ * Удаляет из чата сообщения файлов. Возвращает {deleted, left}: left = старше 48 ч + отказавшие.
+ * Файл, до которого последнее касание (создание/открытие) было ≥48 ч назад, не трогаем — все его сообщения заведомо старые
+ * (opened_at ставится вместе с отправкой копии). ПОТОЛОК: у «свежего» файла старое входящее сообщение уходит в батч;
+ * считается удалённым, если deleteMessages вернул true — Telegram мог его молча пропустить. Апгрейд: хранить дату каждого id.
+ * Батч упал целиком -> по одному deleteMessage, чтобы одна плохая id не прятала остальные.
+ */
+export async function deleteChatMessages({ call, chatId, files, now }) {
+  const ids = []; let left = 0;
+  for (const f of files) {
+    const touched = Math.max(f.opened_at ?? 0, f.created_at ?? 0);
+    const stale = now - touched >= CHAT_DELETE_WINDOW_SECONDS;
+    for (const id of f.chat_messages ?? []) {
+      if (ids.includes(id)) continue;
+      if (stale) left++; else ids.push(id);
+    }
+  }
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += DELETE_MESSAGES_BATCH) {
+    const batch = ids.slice(i, i + DELETE_MESSAGES_BATCH);
+    try {
+      await call('deleteMessages', { chat_id: chatId, message_ids: batch });
+      deleted += batch.length;
+    } catch {
+      // deleteMessages нет (старый Bot API) или батч отвергнут — идём по одному; причина отказа каждого id нам не нужна
+      for (const id of batch) {
+        try { await call('deleteMessage', { chat_id: chatId, message_id: id }); deleted++; } catch { left++; }
+      }
+    }
+  }
+  return { deleted, left };
 }
 
 // ---------- inline: страница результатов ----------
