@@ -374,3 +374,21 @@ export async function pullFromChat({ call, transport, allowedIds, loadOffset, sa
   }
   return { added, duplicates };
 }
+
+// ---------- inline: страница результатов ----------
+
+export const INLINE_PAGE_SIZE = 20;
+export const INLINE_MAX_RESULTS = 50; // потолок Telegram на один answerInlineQuery
+
+/**
+ * Страница inline-результатов: новые первыми; файлы без inline-типа отсеиваются ДО среза (страницы без дыр).
+ * offset — сдвиг от Telegram (строка из next_offset); мусор -> 0. id:<n> отдаёт один файл без next_offset.
+ */
+export function inlinePage(index, query, offset) {
+  const parsed = Number.parseInt(offset, 10);
+  const start = Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+  const all = searchFiles(index, query).map(inlineResultFor).filter(Boolean);
+  const results = all.slice(start, start + Math.min(INLINE_PAGE_SIZE, INLINE_MAX_RESULTS));
+  const next = start + results.length;
+  return { results, nextOffset: parseIdQuery(query) === null && next < all.length ? String(next) : '' };
+}
