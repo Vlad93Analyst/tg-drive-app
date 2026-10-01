@@ -10,7 +10,7 @@ export const state = {
   selecting: false, selected: new Set(), screen: 'list', current: null,
   // данные и клиент
   pullHidden: false, // ВРЕМЕННО: кнопка «Забрать из чата» скрыта после ошибки вебхука
-  index: null, client: null, transport: null, chatId: null, prefs: null, thumbs: null,
+  index: null, client: null, transport: null, chatId: null, prefs: null, loadError: null,
   onChange: () => {}, // list-view подставляет перерисовку
 };
 

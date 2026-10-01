@@ -1,5 +1,4 @@
 // Отрисовка одного файла (строка, плитка галереи, карточка карусели) и плитки папки.
-import { previewFileId } from './core.js';
 import { fileTypeOf, trashDaysLeft } from './drive.js';
 import { fileSheet, trashSheet } from './actions.js';
 import { folderSheet } from './folder-actions.js';
@@ -12,12 +11,14 @@ import { el, formatDay, formatSize, TYPE_GLYPH } from './ui.js';
 const LONG_PRESS_MS = 500;
 const FOLDER_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>';
 
-/** Цветная иконка по типу; превью (если есть) подгружается поверх и плавно проявляется. */
+/**
+ * Цветная иконка по типу. Превью отключены: файл превью лежит на api.telegram.org/file/..., который на HTTP 200 не отдаёт
+ * Access-Control-Allow-Origin, браузер его не скачает (CORS). `thumb_file_id` остаётся в записи индекса на будущее
+ * (например, бот-прокси или встроенные превью в индексе).
+ */
 export function typeIcon(file) {
   const type = fileTypeOf(file);
   const box = el('div', `ticon t-${type}`, TYPE_GLYPH[type]);
-  const previewId = previewFileId(file);
-  if (previewId) { const img = el('img'); img.alt = ''; state.thumbs.attach(img, previewId); box.append(img); }
   if (state.selecting) box.append(el('span', 'check', state.selected.has(file.id) ? '✓' : ''));
   return box;
 }

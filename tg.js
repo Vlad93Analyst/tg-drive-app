@@ -82,3 +82,9 @@ export function applyInsets() {
 export function openTelegramLink(url) {
   if (atLeast('6.1') && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
 }
+
+/** Telegram CloudStorage (6.9) как есть: колбэк-стиль `(args..., cb(err, value))`, транспорт индекса сам его оборачивает. */
+export const cloudStorage = () => {
+  if (!atLeast('6.9') || !tg.CloudStorage) throw new Error('нужен Telegram с CloudStorage (Bot API 6.9+): индекс хранится там');
+  return tg.CloudStorage;
+};

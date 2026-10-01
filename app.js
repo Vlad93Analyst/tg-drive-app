@@ -3,8 +3,9 @@
 import { biometricSupported } from './biometric.js';
 import { createBotClient, normalizeToken } from './botapi.js';
 import { ALLOWED_USER_IDS } from './config.js';
-import { isAllowed, pinnedIndexTransport } from './core.js';
+import { cloudIndexTransport, isAllowed } from './core.js';
 import { initCard } from './card-view.js';
+import { offerLegacyPinCleanup } from './legacy-pin.js';
 import { initList } from './list-view.js';
 import { go, initChrome, refreshChrome } from './nav.js';
 import { initSheet } from './sheet.js';
@@ -12,8 +13,7 @@ import { loadPrefs } from './prefs.js';
 import { initSettings, unlock } from './settings-view.js';
 import { state } from './state.js';
 import { applyTheme } from './theme.js';
-import { applyInsets, tg } from './tg.js';
-import { createThumbLoader } from './thumbs.js';
+import { applyInsets, cloudStorage, confirmDialog, tg } from './tg.js';
 import { createTokenStore } from './token-store.js';
 import { $, guard } from './ui.js';
 
@@ -22,9 +22,9 @@ const tokenStore = createTokenStore(tg);
 
 async function start(token) {
   state.client = createBotClient(token);
-  state.transport = pinnedIndexTransport({ ...state.client, chatId: state.chatId });
-  state.thumbs = createThumbLoader({ getFileUrl: state.client.getFileUrl });
-  await go('list');
+  state.transport = cloudIndexTransport(cloudStorage());
+  await go('list'); // ошибка загрузки индекса показывается баннером в списке и не роняет интерфейс
+  offerLegacyPinCleanup({ call: state.client.call, chatId: state.chatId, transport: state.transport, confirm: confirmDialog }).catch(() => {}); // необязательная уборка
 }
 
 async function openWithToken() {

@@ -52,7 +52,7 @@ function openFab() {
 }
 
 export function render() {
-  if (!state.index) return;
+  if (!state.index) { if (state.loadError) showLoadError(state.loadError); return; }
   const content = $('content');
   const nodes = state.q ? searchSection() : state.index.files.length || state.tab === 'files' ? SECTIONS[state.tab]() : [emptyDrive()];
   content.replaceChildren(...nodes);
@@ -64,9 +64,24 @@ export function render() {
   renderSelectionBar(visible.map((f) => f.id));
 }
 
+function showLoadError(error) {
+  $('skeleton').hidden = true;
+  const box = el('div', 'banner');
+  box.append(el('p', '', `Не удалось загрузить индекс: ${error.message}`), button('Повторить', '', reload));
+  $('content').replaceChildren(box);
+}
+
+/** Ошибка загрузки не бросается наружу: интерфейс (табы, FAB, настройки) остаётся рабочим, в списке баннер «Повторить». */
 export async function reload() {
   if (!state.index) $('skeleton').hidden = false;
-  state.index = await readIndex(state.transport);
+  try {
+    state.index = await readIndex(state.transport);
+    state.loadError = null;
+  } catch (e) {
+    state.loadError = e; haptic.error();
+    if (!state.index) return showLoadError(e);
+    return toast(`Не удалось обновить: ${e.message}`);
+  }
   render();
 }
 

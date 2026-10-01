@@ -286,6 +286,7 @@ export function resolveFiles(params, files, makeFile) {
 }
 
 /**
+ * Транспорт БОТА (закреп-файл; браузеру непригоден — CORS на /file/, Mini App использует cloudIndexTransport).
  * transport = { read(): {index, ref}|null, write(index, ref|null) }.
  * `call(method, params, files)` и `getFileBytes(file_id)` дают бот (Serverless api) или браузер (fetch).
  */
@@ -305,6 +306,69 @@ export function pinnedIndexTransport({ call, getFileBytes, chatId }) {
       }
       const sent = await call('sendDocument', { chat_id: chatId, disable_notification: true }, { document: file });
       await call('pinChatMessage', { chat_id: chatId, message_id: sent.message_id, disable_notification: true });
+    },
+  };
+}
+
+// ---------- индекс в Telegram CloudStorage (транспорт Mini App) ----------
+// Почему не pinned-файл: браузер не может скачать файл — api.telegram.org/file/... на HTTP 200 не отдаёт
+// Access-Control-Allow-Origin (fetch падает TypeError). Методы /bot<token>/<method> CORS отдают.
+// ПОТОЛОК: ключей 1024 на пользователя, значение <= 4096 символов; два слота (a/b) на время записи ->
+// ~500 чанков ≈ 2 МБ JSON ≈ тысячи-десятки тысяч записей. Апгрейд: сжатие (CompressionStream) и короткие ключи полей.
+// Индекс виден только самому Mini App этого пользователя: боту CloudStorage недоступен (см. lib/bot.js).
+
+export const CLOUD_CHUNK_SIZE = 4096;
+export const CLOUD_META_KEY = 'idx_meta';
+export const CLOUD_MAX_KEYS = 1024;
+const CLOUD_FORMAT = 1;
+const cloudChunkKey = (slot, i) => `idx_${slot}_${i}`;
+
+/** Режет строку на куски <= size символов, не разрывая суррогатную пару (иначе кусок не сериализуется в UTF-8). */
+export function chunkString(text, size = CLOUD_CHUNK_SIZE) {
+  const chunks = [];
+  for (let at = 0; at < text.length;) {
+    let end = Math.min(at + size, text.length);
+    const last = text.charCodeAt(end - 1);
+    if (end < text.length && last >= 0xd800 && last <= 0xdbff) end--;
+    chunks.push(text.slice(at, end));
+    at = end;
+  }
+  return chunks;
+}
+
+/**
+ * CloudStorage в колбэк-стиле Telegram: `(key, cb(err, value))`. Транспорт — тот же интерфейс, что у pinnedIndexTransport.
+ * Чанки пишутся в слот, который НЕ указывает текущая meta (a/b поочерёдно), meta пишется последней и является точкой
+ * коммита: упала запись чанка — meta прежняя, читается прежний индекс целиком. Старый слот чистится после коммита.
+ * ref = meta {version, rev, slot, chunks, updated_at}.
+ */
+export function cloudIndexTransport(storage) {
+  const run = (method, ...args) => new Promise((resolve, reject) => storage[method](...args, (error, value) => (error ? reject(new Error(String(error))) : resolve(value))));
+  const readMeta = async () => {
+    const raw = await run('getItem', CLOUD_META_KEY);
+    return raw ? JSON.parse(raw) : null;
+  };
+  return {
+    async read() {
+      const meta = await readMeta();
+      if (!meta) return null;
+      const keys = Array.from({ length: meta.chunks }, (_, i) => cloudChunkKey(meta.slot, i));
+      const values = keys.length ? await run('getItems', keys) : {};
+      const parts = keys.map((key) => values[key]);
+      if (parts.some((part) => !part)) throw new Error('индекс в CloudStorage повреждён: не хватает чанка');
+      return { index: JSON.parse(parts.join('')), ref: meta };
+    },
+    async write(index, ref) {
+      const old = ref ?? (await readMeta());
+      const slot = old?.slot === 'a' ? 'b' : 'a';
+      const chunks = chunkString(JSON.stringify(index));
+      if (chunks.length * 2 + 1 > CLOUD_MAX_KEYS) throw new Error('индекс не помещается в CloudStorage (потолок ключей)');
+      for (const [i, chunk] of chunks.entries()) await run('setItem', cloudChunkKey(slot, i), chunk);
+      await run('setItem', CLOUD_META_KEY, JSON.stringify({ version: CLOUD_FORMAT, rev: index.rev, slot, chunks: chunks.length, updated_at: index.updated_at }));
+      if (old?.chunks) {
+        // сбой чистки не теряет данные (meta уже указывает на новый слот); хвост перезапишется записью через слот
+        await run('removeItems', Array.from({ length: old.chunks }, (_, i) => cloudChunkKey(old.slot, i))).catch(() => {});
+      }
     },
   };
 }

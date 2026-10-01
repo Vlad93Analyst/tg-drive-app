@@ -1,6 +1,6 @@
 // Клиент Bot API из браузера. api.telegram.org отвечает CORS `*`, но на preflight (OPTIONS) даёт 501,
 // поэтому ТОЛЬКО simple requests: POST с urlencoded/FormData, без headers (никакого application/json),
-// вложенные объекты — JSON-строкой в поле формы; скачивание — простой GET.
+// вложенные объекты — JSON-строкой в поле формы; скачивания файлов из браузера нет (CORS на /file/).
 const API = 'https://api.telegram.org';
 
 export class BotApiError extends Error {}
@@ -55,8 +55,8 @@ export function createBotClient(token, fetchImpl = (...args) => fetch(...args)) 
   }
 
   /**
-   * URL содержит токен бота: годится для fetch/<img> из самого Mini App; в WebApp.downloadFile он уходит
-   * в клиент Telegram — это осознанный компромисс (бэкенда, который подписал бы ссылку, нет).
+   * НЕ для fetch/<img> из браузера: /file/ на HTTP 200 не отдаёт CORS-заголовок. URL уходит только в WebApp.downloadFile —
+   * скачивание делает клиент Telegram, не fetch. Токен в URL — осознанный компромисс (бэкенда, который подписал бы ссылку, нет).
    * Лимит getFile — 20 MB.
    */
   async function getFileUrl(fileId) {
@@ -64,11 +64,5 @@ export function createBotClient(token, fetchImpl = (...args) => fetch(...args)) 
     return { url: `${API}/file/bot${token}/${file_path}`, size: file_size ?? null };
   }
 
-  async function getFileBytes(fileId) {
-    const response = await fetchImpl((await getFileUrl(fileId)).url);
-    if (!response.ok) throw new BotApiError(`download: ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
-  }
-
-  return { call, getFileBytes, getFileUrl };
+  return { call, getFileUrl };
 }
