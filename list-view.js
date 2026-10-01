@@ -73,6 +73,7 @@ function showLoadError(error) {
 
 /** Ошибка загрузки не бросается наружу: интерфейс (табы, FAB, настройки) остаётся рабочим, в списке баннер «Повторить». */
 export async function reload() {
+  if (!state.transport && state.retryStart) { const retry = state.retryStart; state.retryStart = null; state.loadError = null; return retry(); }
   if (!state.index) $('skeleton').hidden = false;
   try {
     state.index = await readIndex(state.transport);
@@ -111,7 +112,7 @@ export function initList(onBackChanged) {
   state.onChange = render;
   bindRerender(render);
   register('list', {
-    enter: guard(async () => (state.index ? render() : reload())),
+    enter: guard(async () => (state.index || (state.loadError && !state.transport) ? render() : reload())),
     cancelSelection,
     up: () => openPath(parentPath(state.path)),
   });

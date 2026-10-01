@@ -8,17 +8,19 @@ export const DEFAULT_PREFS = { view: 'list', theme: 'auto', biometric: 'off', so
 
 const useDevice = () => atLeast('9.0') && tg.DeviceStorage;
 
+// Настройки необязательны: короткий таймаут, чтобы молчащее DeviceStorage не держало белый экран.
+const PREFS_TIMEOUT_MS = 1500;
+
 async function read(key) {
-  if (useDevice()) return promisify((cb) => tg.DeviceStorage.getItem(PREFIX + key, cb));
+  if (useDevice()) return promisify((cb) => tg.DeviceStorage.getItem(PREFIX + key, cb), PREFS_TIMEOUT_MS);
   return localStorage.getItem(PREFIX + key);
 }
 
 export async function loadPrefs() {
-  const prefs = { ...DEFAULT_PREFS };
-  for (const key of Object.keys(DEFAULT_PREFS)) {
-    try { prefs[key] = (await read(key)) || DEFAULT_PREFS[key]; } catch { /* битое хранилище = значение по умолчанию */ }
-  }
-  return prefs;
+  // параллельно: последовательное чтение × таймаут давало десятки секунд пустого экрана
+  const keys = Object.keys(DEFAULT_PREFS);
+  const values = await Promise.all(keys.map((key) => read(key).catch(() => null))); // битое/молчащее хранилище = значение по умолчанию
+  return Object.fromEntries(keys.map((key, i) => [key, values[i] || DEFAULT_PREFS[key]]));
 }
 
 export async function savePref(prefs, key, value) {

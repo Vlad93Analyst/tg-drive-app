@@ -317,6 +317,23 @@ export function pinnedIndexTransport({ call, getFileBytes, chatId }) {
 // ~500 чанков ≈ 2 МБ JSON ≈ тысячи-десятки тысяч записей. Апгрейд: сжатие (CompressionStream) и короткие ключи полей.
 // Индекс виден только самому Mini App этого пользователя: боту CloudStorage недоступен (см. lib/bot.js).
 
+// Telegram-хранилища (CloudStorage/DeviceStorage) на сбое клиента иногда не вызывают колбэк вовсе — без таймаута UI висит пустым.
+export const STORAGE_TIMEOUT_MS = 8000;
+export class StorageTimeoutError extends Error {
+  constructor(ms) { super(`хранилище Telegram не отвечает (${ms / 1000} с)`); this.name = 'StorageTimeoutError'; }
+}
+
+/** `start(cb)` вызывает колбэк-API `(error, value)`; не ответил за timeoutMs -> StorageTimeoutError. */
+export function storageCall(start, timeoutMs = STORAGE_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new StorageTimeoutError(timeoutMs)), timeoutMs);
+    start((error, value) => {
+      clearTimeout(timer);
+      if (error) reject(new Error(String(error))); else resolve(value);
+    });
+  });
+}
+
 export const CLOUD_CHUNK_SIZE = 4096;
 export const CLOUD_META_KEY = 'idx_meta';
 export const CLOUD_MAX_KEYS = 1024;
@@ -342,8 +359,8 @@ export function chunkString(text, size = CLOUD_CHUNK_SIZE) {
  * коммита: упала запись чанка — meta прежняя, читается прежний индекс целиком. Старый слот чистится после коммита.
  * ref = meta {version, rev, slot, chunks, updated_at}.
  */
-export function cloudIndexTransport(storage) {
-  const run = (method, ...args) => new Promise((resolve, reject) => storage[method](...args, (error, value) => (error ? reject(new Error(String(error))) : resolve(value))));
+export function cloudIndexTransport(storage, { timeoutMs = STORAGE_TIMEOUT_MS } = {}) {
+  const run = (method, ...args) => storageCall((cb) => storage[method](...args, cb), timeoutMs);
   const readMeta = async () => {
     const raw = await run('getItem', CLOUD_META_KEY);
     return raw ? JSON.parse(raw) : null;

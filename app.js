@@ -28,7 +28,11 @@ async function start(token) {
 }
 
 async function openWithToken() {
-  const token = await tokenStore.get();
+  let token;
+  try { token = await tokenStore.get(); } catch (e) {
+    state.loadError = e; state.retryStart = openWithToken; // баннер «Повторить» в списке вместо белого экрана
+    return go('list');
+  }
   if (!token) return go('token');
   await start(token);
 }
