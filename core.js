@@ -238,7 +238,7 @@ export function deleteEntries(index, ids) {
 export const DOWNLOAD_LIMIT_BYTES = 20 * 1024 ** 2;
 export const canDownload = (file) => file.size == null || file.size <= DOWNLOAD_LIMIT_BYTES;
 
-const isAudioFile = (f) => f.kind === 'audio' || f.kind === 'voice' || (f.kind === 'document' && /^audio\//.test(f.mime ?? ''));
+export const isAudioFile = (f) => f.kind === 'audio' || f.kind === 'voice' || (f.kind === 'document' && /^audio\//.test(f.mime ?? ''));
 
 /**
  * Что делает основное «Открыть»: 'player' / 'viewer' — встроенные (файл ≤20 МБ, иначе getFile не отдаст),
@@ -251,22 +251,79 @@ export function openAction(file) {
   return 'chat';
 }
 
-/**
- * Скачивание на устройство. Native downloadFile (Bot API 8.0) показывает попап; Telegram-сервер файлов не шлёт
- * Content-Disposition/ACAO, которые требует дока Mini Apps, поэтому на части клиентов он может не сработать —
- * на ошибку и на клиент <8.0 уходим в openLink (внешний браузер, файл скачивается там).
- * Возвращает 'accepted' | 'declined' | 'browser'.
- */
-export function startDownload(app, { url, file_name }) {
-  const viaBrowser = () => { app.openLink(url); return 'browser'; };
-  if (!app.isVersionAtLeast?.('8.0') || !app.downloadFile) return Promise.resolve(viaBrowser());
-  return new Promise((resolve) => {
-    try {
-      app.downloadFile({ url, file_name }, (accepted) => resolve(accepted ? 'accepted' : 'declined'));
-    } catch {
-      resolve(viaBrowser()); // клиент заявил 8.0, но метод бросил — это и есть случай «Скачать ничего не делает»
+/** Файлы той же папки, подходящие под `pick`, по порядку добавления; корзина исключена. Файла нет в списке — очередь из него одного. */
+export function folderQueue(files, current, pick) {
+  const list = files.filter((f) => !f.trashed_at && f.folder === current.folder && pick(f)).sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+  const position = list.findIndex((f) => f.id === current.id);
+  return position < 0 ? { list: [current], position: 0 } : { list, position };
+}
+export const trackQueue = (files, current) => folderQueue(files, current, (f) => isAudioFile(f) && canDownload(f));
+export const photoQueue = (files, current) => folderQueue(files, current, (f) => f.kind === 'photo' && canDownload(f));
+/** Соседний элемент очереди; null за краем (по кругу не ходим). */
+export const stepIndex = (position, length, step) => { const next = position + step; return next >= 0 && next < length ? next : null; };
+
+export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
+export const nextSpeed = (current) => {
+  const at = PLAYBACK_SPEEDS.indexOf(current);
+  return at < 0 ? 1 : PLAYBACK_SPEEDS[(at + 1) % PLAYBACK_SPEEDS.length];
+};
+
+/** Ссылка из getFile живёт ~час; кэш с TTL 50 мин, чтобы не дёргать getFile на каждый показ. */
+export const URL_TTL_MS = 50 * 60 * 1000;
+export function createUrlCache({ ttlMs = URL_TTL_MS, now = Date.now } = {}) {
+  const entries = new Map();
+  return {
+    get(key) {
+      const hit = entries.get(key);
+      if (!hit) return null;
+      if (now() - hit.at >= ttlMs) { entries.delete(key); return null; }
+      return hit.url;
+    },
+    set(key, url) { entries.set(key, { url, at: now() }); },
+  };
+}
+
+/** Не больше `max` задач одновременно (превью: не заваливаем getFile). */
+export function createLimiter(max) {
+  let active = 0;
+  const waiting = [];
+  const pump = () => {
+    while (active < max && waiting.length) {
+      const { task, resolve, reject } = waiting.shift();
+      active++;
+      task().then(resolve, reject).finally(() => { active--; pump(); });
     }
-  });
+  };
+  return (task) => new Promise((resolve, reject) => { waiting.push({ task, resolve, reject }); pump(); });
+}
+
+const MIME_EXT = {
+  'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac',
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'video/mp4': 'mp4', 'video/quicktime': 'mov',
+  'application/pdf': 'pdf', 'application/zip': 'zip', 'text/plain': 'txt',
+};
+
+/** Имя для скачивания обязательно с расширением: без него ОС сохраняет файл «как есть» без типа. Расширение — из имени, иначе из mime, иначе из вида. */
+export function downloadFileName(file) {
+  const name = file.file_name || `file-${file.id ?? ''}`;
+  if (/\.[A-Za-z0-9]{1,5}$/.test(name)) return name;
+  const ext = MIME_EXT[file.mime] ?? DEFAULT_EXT[file.kind];
+  return ext ? `${name}.${ext}` : name;
+}
+
+/**
+ * Скачивание на устройство: нативный downloadFile (Bot API 8.0), и только он — запасной openLink параллельно давал второе
+ * скачивание (случайное имя без расширения) вместе с нативным запросом. Внешний браузер — только когда downloadFile нет
+ * вовсе (клиент <8.0) либо по отдельной кнопке «Скачать в браузере». Исключение метода — наружу, в toast.
+ * Не ждёт callback: клиент может его не вызвать, и UI не должен висеть. Ответ клиента, если придёт, — в onResult('accepted'|'declined').
+ * Возвращает 'started' | 'browser'.
+ */
+export function startDownload(app, { url, file_name }, onResult) {
+  if (!app.isVersionAtLeast?.('8.0') || !app.downloadFile) { app.openLink(url); return Promise.resolve('browser'); }
+  try {
+    app.downloadFile({ url, file_name }, (accepted) => onResult?.(accepted ? 'accepted' : 'declined'));
+  } catch (e) { return Promise.reject(e); }
+  return Promise.resolve('started');
 }
 
 /** Параметры savePreparedInlineMessage (Bot API 8.0): готовое inline-сообщение для WebApp.shareMessage; null для video_note. */

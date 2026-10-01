@@ -5,7 +5,8 @@ import {
 } from './drive.js';
 import { go } from './nav.js';
 import { openSheet, pickFolder } from './sheet.js';
-import { downloadInBrowser, downloadToDevice, openFile, shareToAnyChat } from './transfer.js';
+import { openAction } from './core.js';
+import { downloadInBrowser, downloadToDevice, openFile, sendToBotChat, shareToAnyChat } from './transfer.js';
 import { commit, nowSeconds, state } from './state.js';
 import { confirmDialog, haptic } from './tg.js';
 import { ask, toast } from './ui.js';
@@ -69,7 +70,8 @@ export async function addTagTo(ids) {
 export function fileSheet(file) {
   const act = (fn) => () => fn(file);
   openSheet(file.file_name, [
-    { icon: '💬', label: 'Открыть в Telegram', onClick: act(openFile) },
+    ...(openAction(file) === 'chat' ? [] : [{ icon: '▶', label: 'Открыть', onClick: act(openFile) }]),
+    { icon: '💬', label: 'Открыть в Telegram', onClick: act(sendToBotChat) },
     { icon: '📤', label: 'Отправить…', onClick: act(shareToAnyChat) },
     { icon: '⬇', label: 'Скачать', onClick: act(downloadToDevice) },
     { icon: '🌐', label: 'Скачать в браузере', onClick: act(downloadInBrowser) },

@@ -39,3 +39,15 @@ export async function saveUpdatesOffset(value) {
   if (useDevice()) return promisify((cb) => tg.DeviceStorage.setItem(PREFIX + OFFSET_KEY, String(value), cb));
   localStorage.setItem(PREFIX + OFFSET_KEY, String(value));
 }
+
+// Позиция воспроизведения по file_unique_id. DeviceStorage, при его отсутствии — localStorage (как остальные настройки).
+const POSITION_PREFIX = 'pos_';
+export async function loadPosition(fileKey) {
+  const raw = await read(POSITION_PREFIX + fileKey).catch(() => null);
+  return raw ? Number(raw) || 0 : 0;
+}
+export async function savePosition(fileKey, seconds) {
+  const value = String(Math.floor(seconds));
+  if (useDevice()) return promisify((cb) => tg.DeviceStorage.setItem(PREFIX + POSITION_PREFIX + fileKey, value, cb)).catch(() => {});
+  localStorage.setItem(PREFIX + POSITION_PREFIX + fileKey, value);
+}

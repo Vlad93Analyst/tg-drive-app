@@ -2,6 +2,8 @@
 // поэтому ТОЛЬКО simple requests: POST с urlencoded/FormData, без headers (никакого application/json),
 // вложенные объекты — JSON-строкой в поле формы; скачивания файлов из браузера нет (CORS на /file/).
 const API = 'https://api.telegram.org';
+// База ссылок на файлы; `{token}` подставляется. Переопределяется window.__TG_FILE_BASE (dev/harness.html отдаёт локальные файлы).
+const DEFAULT_FILE_BASE = `${API}/file/bot{token}/`;
 
 export class BotApiError extends Error {}
 
@@ -55,13 +57,14 @@ export function createBotClient(token, fetchImpl = (...args) => fetch(...args)) 
   }
 
   /**
-   * НЕ для fetch/<img> из браузера: /file/ на HTTP 200 не отдаёт CORS-заголовок. URL уходит только в WebApp.downloadFile —
-   * скачивание делает клиент Telegram, не fetch. Токен в URL — осознанный компромисс (бэкенда, который подписал бы ссылку, нет).
+   * НЕ для fetch из браузера: /file/ на HTTP 200 не отдаёт CORS-заголовок. Теги <img>/<audio>/<video> CORS не требуют
+   * (crossOrigin НЕ ставить); скачивание — WebApp.downloadFile, делает клиент Telegram. Токен в URL — осознанный компромисс (бэкенда, который подписал бы ссылку, нет).
    * Лимит getFile — 20 MB.
    */
   async function getFileUrl(fileId) {
     const { file_path, file_size } = await call('getFile', { file_id: fileId });
-    return { url: `${API}/file/bot${token}/${file_path}`, size: file_size ?? null };
+    const base = (globalThis.__TG_FILE_BASE ?? DEFAULT_FILE_BASE).replace('{token}', token);
+    return { url: `${base}${file_path}`, size: file_size ?? null };
   }
 
   return { call, getFileUrl };

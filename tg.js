@@ -5,12 +5,10 @@ export const atLeast = (version) => Boolean(tg.isVersionAtLeast?.(version));
 
 const safely = (fn) => { try { fn(); } catch { /* опциональная функция клиента: отсутствие не должно ронять интерфейс */ } };
 
-export const haptic = {
-  impact: (style = 'light') => atLeast('6.1') && safely(() => tg.HapticFeedback.impactOccurred(style)),
-  success: () => atLeast('6.1') && safely(() => tg.HapticFeedback.notificationOccurred('success')),
-  error: () => atLeast('6.1') && safely(() => tg.HapticFeedback.notificationOccurred('error')),
-  select: () => atLeast('6.1') && safely(() => tg.HapticFeedback.selectionChanged()),
-};
+// Вибро отключено намеренно: в Telegram Desktop для macOS HapticFeedback играет системный звук. Вызовы оставлены no-op,
+// чтобы не размазывать правку по модулям; вернуть — подставить tg.HapticFeedback.* (гейт tests/no-sound.test.js упадёт).
+const none = () => {};
+export const haptic = { impact: none, success: none, error: none, select: none };
 
 /** Нативный showConfirm/showPopup (6.2), иначе window.confirm. */
 export function confirmDialog(message, { okText = 'OK', destructive = false } = {}) {

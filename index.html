@@ -15,7 +15,7 @@
   <p class="hint">Вставь токен от @BotFather. Он хранится только на этом устройстве (Telegram secure storage) и никуда не отправляется, кроме api.telegram.org.</p>
   <input id="token-input" type="text" placeholder="123456:ABC..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <button id="token-save">Сохранить</button>
-  <p class="hint">версия: 1001-1534</p>
+  <p class="hint">версия: 1001-1553</p>
 </section>
 <main id="list-view" class="screen" hidden>
   <header id="top-bar">
@@ -46,6 +46,7 @@
     <button id="c-download" class="secondary">Скачать</button>
     <button id="c-more" class="secondary">Ещё…</button>
   </div>
+  <p id="c-open-hint" class="hint" hidden>Документы открываются в просмотрщике Telegram.</p>
   <p id="c-download-hint" class="hint" hidden>Файл больше 20 МБ: Bot API не отдаёт такие файлы — откройте его в Telegram.</p>
   <h3 class="group">Сведения</h3>
   <dl id="c-meta"></dl>
@@ -68,6 +69,22 @@
   <button id="token-reset" class="danger">Сбросить токен</button>
   <button id="s-close">Готово</button>
 </section>
+<div id="mini-player" hidden><div id="mp-bar"></div><span id="mp-title"></span><button id="mp-play" class="icon-btn" aria-label="Играть или пауза">▶</button></div>
+<div id="full-player" class="overlay" hidden>
+  <button id="fp-close" class="icon-btn" aria-label="Свернуть">⌄</button>
+  <h2 id="fp-title"></h2>
+  <input id="fp-seek" type="range" min="0" max="0" value="0" aria-label="Позиция">
+  <p id="fp-time" class="hint">0:00 / 0:00</p>
+  <div class="fp-row">
+    <button id="fp-prev" class="icon-btn" aria-label="Предыдущий">⏮</button>
+    <button id="fp-back" class="icon-btn" aria-label="Назад 15 секунд">−15</button>
+    <button id="fp-play" class="icon-btn big" aria-label="Играть или пауза">▶</button>
+    <button id="fp-fwd" class="icon-btn" aria-label="Вперёд 15 секунд">+15</button>
+    <button id="fp-next" class="icon-btn" aria-label="Следующий">⏭</button>
+  </div>
+  <button id="fp-speed" class="secondary">1×</button>
+</div>
+<div id="viewer" class="overlay dark" hidden><div id="viewer-bar"><button id="viewer-close" class="icon-btn" aria-label="Закрыть">✕</button><span id="viewer-title"></span></div><div id="viewer-stage"></div></div>
 <div id="sheet-backdrop" hidden></div>
 <div id="sheet" role="dialog" aria-modal="true" hidden><div id="sheet-grip"></div><h3 id="sheet-title"></h3><div id="sheet-body"></div></div>
 <div id="toast" hidden><span id="toast-text"></span><button id="toast-action" class="text-btn" hidden></button></div>

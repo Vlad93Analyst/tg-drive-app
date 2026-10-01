@@ -1,6 +1,9 @@
 // Отправка и скачивание файла + пометка «открыт» для «Недавних».
 import { canDownload, idQuery, preparedMessageParams, sendMethodForKind, startDownload } from './core.js';
+import { downloadFileName, openAction } from './core.js';
+import { playFile } from './player.js';
 import { recordSent, touchOpened } from './drive.js';
+import { openViewer } from './viewer.js';
 import { commit, nowSeconds, state } from './state.js';
 import { atLeast, haptic, tg } from './tg.js';
 import { toast } from './ui.js';
@@ -22,7 +25,8 @@ export function markOpened(file) {
  */
 export async function sendToBotChat(file) {
   const { method, field } = sendMethodForKind(file.kind);
-  const prev = file.sent_message_id;
+  // Свежая запись из индекса: переданный объект мог устареть (прежняя отправка записала id уже после его отрисовки).
+  const prev = (state.index.files.find((f) => f.id === file.id) ?? file).sent_message_id;
   let removedPrevious = false;
   if (prev) {
     try { await state.client.call('deleteMessage', { chat_id: state.chatId, message_id: prev }); removedPrevious = true; } catch { /* старше 48 ч или уже удалено — не мешает отправке */ }
@@ -34,8 +38,13 @@ export async function sendToBotChat(file) {
   tg.close();
 }
 
-/** Основное «Открыть». Встроенные плеер и просмотрщик (openAction 'player'/'viewer') ещё не сделаны — пока всё в чат. */
-export const openFile = (file) => sendToBotChat(file);
+/** Основное «Открыть»: аудио — плеер, фото/видео ≤20 МБ — просмотрщик, остальное (документы, большие файлы) — копия в чат. */
+export function openFile(file) {
+  const action = openAction(file);
+  if (action === 'chat') return sendToBotChat(file);
+  markOpened(file);
+  return action === 'player' ? playFile(file) : openViewer(file);
+}
 
 /** shareMessage (8.0) через savePreparedInlineMessage; на старых клиентах — switchInlineQuery (6.7) с запросом id:<n>. */
 export async function shareToAnyChat(file) {
@@ -60,8 +69,9 @@ export async function downloadToDevice(file) {
   if (!canDownload(file)) throw new Error('файл больше 20 МБ — откройте его в чате');
   const { url } = await state.client.getFileUrl(file.file_id);
   markOpened(file);
-  const result = await startDownload(tg, { url, file_name: file.file_name });
-  toast({ accepted: 'Загрузка запущена', declined: 'Скачивание отменено', browser: 'Открыто в браузере — файл скачается там' }[result]);
+  const messages = { accepted: 'Загрузка запущена', declined: 'Скачивание отменено', browser: 'Открыто в браузере — файл скачается там' };
+  const result = await startDownload(tg, { url, file_name: downloadFileName(file) }, (answer) => toast(messages[answer]));
+  if (result === 'browser') toast(messages.browser);
 }
 
 /** Прямой путь через внешний браузер: когда нативное скачивание молчит. */

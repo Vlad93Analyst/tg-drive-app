@@ -1,5 +1,5 @@
 // Экран «Сведения»: превью, действия, метаданные (тип, размер, где лежит, добавлен, открыт, источник), теги, заметка.
-import { addTag, canDownload, removeTag, updateEntry } from './core.js';
+import { addTag, canDownload, openAction, removeTag, updateEntry } from './core.js';
 import { fileTypeOf, TYPE_LABEL } from './drive.js';
 import { fileSheet } from './actions.js';
 import { typeIcon } from './file-row.js';
@@ -36,6 +36,9 @@ function enter(file) {
   const preview = $('c-preview'); preview.replaceChildren(typeIcon(file));
   renderMeta(file); renderTags(file);
   // До 8.0 нативного скачивания нет, но startDownload откроет файл во внешнем браузере — кнопка нужна всегда.
+  const inApp = openAction(file) !== 'chat';
+  $('c-open').textContent = inApp ? 'Открыть' : 'Открыть в Telegram';
+  $('c-open-hint').hidden = file.kind !== 'document' || inApp;
   $('c-download').hidden = false; $('c-download').disabled = !canDownload(file);
   $('c-download-hint').hidden = canDownload(file);
   $('c-note').value = file.note;

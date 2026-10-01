@@ -8,7 +8,9 @@ import { initCard } from './card-view.js';
 import { offerLegacyPinCleanup } from './legacy-pin.js';
 import { initList } from './list-view.js';
 import { go, initChrome, refreshChrome } from './nav.js';
+import { initPlayer } from './player.js';
 import { initSheet } from './sheet.js';
+import { initViewer } from './viewer.js';
 import { loadPrefs } from './prefs.js';
 import { initSettings, unlock } from './settings-view.js';
 import { state } from './state.js';
@@ -63,7 +65,7 @@ $('token-save').onclick = guard(async () => {
   await start(token);
 });
 
-initSheet(); initList(refreshChrome); initCard(); initSettings(); initChrome();
+initSheet(); initList(refreshChrome); initCard(); initSettings(); initChrome(); initPlayer(); initViewer();
 for (const event of ['safeAreaChanged', 'contentSafeAreaChanged', 'viewportChanged']) tg.onEvent(event, applyInsets);
 tg.onEvent('themeChanged', () => applyTheme(state.prefs.theme));
 

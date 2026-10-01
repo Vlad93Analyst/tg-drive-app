@@ -3,6 +3,7 @@ import { fileTypeOf, trashDaysLeft } from './drive.js';
 import { fileSheet, trashSheet } from './actions.js';
 import { folderSheet } from './folder-actions.js';
 import { go } from './nav.js';
+import { attachPreview } from './preview.js';
 import { startSelection, toggleSelected } from './selection.js';
 import { nowSeconds, state } from './state.js';
 import { haptic } from './tg.js';
@@ -12,13 +13,13 @@ const LONG_PRESS_MS = 500;
 const FOLDER_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>';
 
 /**
- * Цветная иконка по типу. Превью отключены: файл превью лежит на api.telegram.org/file/..., который на HTTP 200 не отдаёт
- * Access-Control-Allow-Origin, браузер его не скачает (CORS). `thumb_file_id` остаётся в записи индекса на будущее
- * (например, бот-прокси или встроенные превью в индексе).
+ * Цветная иконка по типу; поверх неё лениво грузится превью через <img src> (теги CORS не требуют, fetch — требует).
+ * Нет превью или загрузка упала — остаётся иконка.
  */
 export function typeIcon(file) {
   const type = fileTypeOf(file);
   const box = el('div', `ticon t-${type}`, TYPE_GLYPH[type]);
+  attachPreview(box, file);
   if (state.selecting) box.append(el('span', 'check', state.selected.has(file.id) ? '✓' : ''));
   return box;
 }
