@@ -47,7 +47,12 @@ async function openApp() {
 $('lock-retry').onclick = guard(openApp);
 $('token-save').onclick = guard(async () => {
   const token = normalizeToken($('token-input').value);
-  await createBotClient(token).call('getMe'); // невалидный токен -> ошибка до сохранения
+  try {
+    await createBotClient(token).call('getMe'); // невалидный токен -> ошибка до сохранения
+  } catch (e) {
+    // маска вместо токена: по ней видно, что именно ушло в запрос, не раскрывая секрет
+    throw new Error(`${e.message} (ушло: ${token.slice(0, 6)}…${token.slice(-4)}, ${token.length} симв.)`);
+  }
   await tokenStore.set(token);
   $('token-input').value = '';
   await start(token);
