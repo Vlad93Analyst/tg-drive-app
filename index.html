@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Drive</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+<section id="denied" hidden><h2>Нет доступа</h2><p class="hint">Этот аккаунт не в списке разрешённых.</p><p class="hint">Ваш Telegram id: <b id="denied-id">—</b></p></section>
+<section id="lock-view" hidden><h2>Драйв закрыт</h2><p class="hint">Подтвердите личность биометрией.</p><button id="lock-retry">Разблокировать</button></section>
+<section id="token-view" hidden>
+  <h2>Токен бота</h2>
+  <p class="hint">Вставь токен от @BotFather. Он хранится только на этом устройстве (Telegram secure storage) и никуда не отправляется, кроме api.telegram.org.</p>
+  <input id="token-input" type="password" placeholder="123456:ABC..." autocomplete="off">
+  <button id="token-save">Сохранить</button>
+</section>
+<main id="list-view">
+  <div id="pull" class="hint pull" hidden>Отпустите, чтобы обновить</div>
+  <input id="search" type="search" placeholder="Поиск по имени, заметке, тегам" autocomplete="off">
+  <div class="toolbar">
+    <select id="order" aria-label="Порядок"><option value="desc">Новые сверху</option><option value="asc">Старые сверху</option></select>
+    <button id="view-toggle" class="icon secondary" aria-label="Список или сетка">▦</button>
+    <button id="select-toggle" class="icon secondary" aria-label="Выбрать">☑</button>
+    <button id="refresh" class="icon secondary" aria-label="Обновить">⟳</button>
+    <button id="open-settings" class="icon secondary" aria-label="Настройки">⚙</button>
+  </div>
+  <div id="f-folders" class="chips" hidden></div>
+  <div id="f-kinds" class="chips" hidden></div>
+  <div id="f-tags" class="chips" hidden></div>
+  <div id="select-bar" class="select-bar" hidden></div>
+  <div id="skeleton" hidden><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div><div class="sk"></div></div>
+  <div id="files" class="list"></div>
+  <div id="empty" class="empty" hidden></div>
+</main>
+<section id="card-view" hidden>
+  <div id="c-preview" class="preview"></div>
+  <h2 id="c-name"></h2>
+  <dl id="c-meta"></dl>
+  <div id="c-tags" class="chips"></div>
+  <input id="c-tag-new" placeholder="Новый тег, Enter">
+  <textarea id="c-note" rows="3" placeholder="Заметка"></textarea>
+  <div class="row">
+    <button id="c-share" class="secondary">Отправить в чат…</button>
+    <button id="c-download" class="secondary">Скачать на устройство</button>
+    <button id="c-rename" class="secondary">Переименовать</button>
+    <button id="c-move" class="secondary">Переместить</button>
+    <button id="c-delete" class="danger">Удалить из драйва</button>
+  </div>
+  <p id="c-download-hint" class="hint" hidden>Файл больше 20 МБ: Bot API не отдаёт такие файлы — откройте его в чате.</p>
+  <p class="hint">Удаление убирает файл только из индекса; в Telegram он остаётся в исходном чате.</p>
+</section>
+<section id="settings-view" hidden>
+  <h2>Настройки</h2>
+  <label>Вид списка<select id="s-view"><option value="list">Список</option><option value="grid">Сетка (галерея)</option></select></label>
+  <label>Тема<select id="s-theme"><option value="auto">Как в Telegram</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
+  <label id="s-bio-row" class="check-row" hidden><input id="s-bio" type="checkbox"> Спрашивать биометрию при открытии</label>
+  <div id="s-fullscreen-row" hidden><button id="s-fullscreen" class="secondary">Во весь экран</button></div>
+  <div id="s-home-row" hidden><button id="s-home" class="secondary">Добавить ярлык на домашний экран</button></div>
+  <button id="token-reset" class="danger">Сбросить токен</button>
+  <button id="s-close">Готово</button>
+</section>
+<div id="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
