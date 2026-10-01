@@ -1,7 +1,7 @@
 // Точка входа Mini App: инициализация Telegram, предпочтений, темы и маршрут «доступ -> биометрия -> токен -> список».
 // Vanilla ES modules без сборки. Пустые папки не поддерживаются: папка = строка в записи.
 import { biometricSupported } from './biometric.js';
-import { createBotClient } from './botapi.js';
+import { createBotClient, normalizeToken } from './botapi.js';
 import { ALLOWED_USER_IDS } from './config.js';
 import { isAllowed, pinnedIndexTransport } from './core.js';
 import { initCard } from './card-view.js';
@@ -46,7 +46,7 @@ async function openApp() {
 
 $('lock-retry').onclick = guard(openApp);
 $('token-save').onclick = guard(async () => {
-  const token = $('token-input').value.trim();
+  const token = normalizeToken($('token-input').value);
   await createBotClient(token).call('getMe'); // невалидный токен -> ошибка до сохранения
   await tokenStore.set(token);
   $('token-input').value = '';

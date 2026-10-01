@@ -8,9 +8,12 @@ const screens = {}; // name -> { enter(arg), cancelSelection?() }
 
 export const register = (name, handlers) => { screens[name] = handlers; };
 
-/** BackButton виден везде, кроме корня списка (и в режиме выбора он выходит из выбора). */
+// Экраны-ворота (нет токена, блокировка, нет доступа): «назад» из них вёл в пустой список без клиента.
+const GATE_SCREENS = new Set(['token', 'lock', 'denied']);
+
+/** BackButton виден везде, кроме корня списка и экранов-ворот (в режиме выбора он выходит из выбора). */
 export function refreshChrome() {
-  const needsBack = state.screen !== 'list' || state.selecting;
+  const needsBack = (state.screen !== 'list' && !GATE_SCREENS.has(state.screen)) || state.selecting;
   if (needsBack) tg.BackButton.show(); else tg.BackButton.hide();
 }
 
@@ -26,7 +29,7 @@ export function go(name, arg) {
 
 export function back() {
   if (state.selecting) return screens.list.cancelSelection();
-  return go('list');
+  return go(state.client ? 'list' : 'token'); // из настроек до ввода токена — обратно на ввод токена
 }
 
 export function initChrome() {

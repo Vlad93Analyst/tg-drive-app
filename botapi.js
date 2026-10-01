@@ -5,6 +5,16 @@ const API = 'https://api.telegram.org';
 
 export class BotApiError extends Error {}
 
+const TOKEN_PATTERN = /^\d+:[A-Za-z0-9_-]{30,}$/;
+
+/** Вставка из заметок/чатов приносит пробелы, переносы и невидимые символы внутри — URL с ними
+ * WebKit отвергает ошибкой «The string did not match the expected pattern». Чистим и проверяем формат. */
+export function normalizeToken(raw) {
+  const token = String(raw ?? '').replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, '');
+  if (!TOKEN_PATTERN.test(token)) throw new BotApiError('не похоже на токен бота: нужен вид 123456789:AAH… из @BotFather');
+  return token;
+}
+
 export function toFormData(params, files = {}) {
   const form = new FormData();
   for (const [key, value] of Object.entries(params)) {
@@ -17,8 +27,17 @@ export function toFormData(params, files = {}) {
 
 export function createBotClient(token, fetchImpl = (...args) => fetch(...args)) {
   async function call(method, params = {}, files = {}) {
-    const response = await fetchImpl(`${API}/bot${token}/${method}`, { method: 'POST', body: toFormData(params, files) });
-    const json = await response.json();
+    let response;
+    try {
+      response = await fetchImpl(`${API}/bot${token}/${method}`, { method: 'POST', body: toFormData(params, files) });
+    } catch (e) {
+      throw new BotApiError(`${method}: сеть — ${e.message}`);
+    }
+    const text = await response.text();
+    let json;
+    try { json = JSON.parse(text); } catch {
+      throw new BotApiError(`${method}: HTTP ${response.status}, не JSON — ${text.slice(0, 80)}`);
+    }
     if (!json.ok) throw new BotApiError(`${method}: ${json.description ?? response.status}`);
     return json.result;
   }
