@@ -4,7 +4,7 @@ import { atLeast, tg } from './tg.js';
 import { promisify } from './token-store.js';
 
 const PREFIX = 'tgd_';
-export const DEFAULT_PREFS = { view: 'list', theme: 'auto', biometric: 'off' };
+export const DEFAULT_PREFS = { view: 'list', theme: 'auto', biometric: 'off', sortBy: 'created', sortDir: 'desc' };
 
 const useDevice = () => atLeast('9.0') && tg.DeviceStorage;
 

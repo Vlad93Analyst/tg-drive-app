@@ -77,3 +77,8 @@ export function applyInsets() {
   root.setProperty('--safe-left', px((s.left ?? 0) + (c.left ?? 0)));
   root.setProperty('--safe-right', px((s.right ?? 0) + (c.right ?? 0)));
 }
+
+/** t.me-ссылки открываются внутри Telegram (6.1), иначе обычным окном. */
+export function openTelegramLink(url) {
+  if (atLeast('6.1') && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
+}

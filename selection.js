@@ -1,9 +1,10 @@
-// Мультиселект: выбор файлов и массовые операции. Каждая операция — ОДНА запись индекса на всю пачку.
-import { deleteEntries, listFolders, moveEntries, tagEntries } from './core.js';
+// Мультиселект: контекстная верхняя панель «N выбрано» + действия. Каждая операция — ОДНА запись индекса на пачку.
 import { refreshChrome } from './nav.js';
-import { commit, state } from './state.js';
-import { confirmDialog, haptic } from './tg.js';
-import { $, ask, button, pickFolder, toast } from './ui.js';
+import { state } from './state.js';
+import { haptic } from './tg.js';
+import { button, el, guard, $ } from './ui.js';
+import { addTagTo, moveFilesTo, purgeFiles, restoreFiles, setStar, trashFiles } from './actions.js';
+import { openSheet } from './sheet.js';
 
 let rerender = () => {};
 export const bindRerender = (fn) => { rerender = fn; };
@@ -22,31 +23,34 @@ export function toggleSelected(id) {
   rerender();
 }
 
-async function applyBulk(change, doneText) {
-  const ids = [...state.selected];
-  await commit((idx) => change(idx, ids));
-  haptic.success(); toast(`${doneText}: ${ids.length}`);
-  cancelSelection();
-}
+const iconButton = (glyph, label, onClick) => {
+  const b = button(glyph, 'icon-btn', onClick); b.setAttribute('aria-label', label); return b;
+};
+
+/** Выполняет действие над выбранным и выходит из режима выбора. */
+const bulk = (fn) => async () => { const ids = [...state.selected]; await fn(ids); cancelSelection(); };
 
 export function renderSelectionBar(visibleIds) {
   const bar = $('select-bar'); bar.hidden = !state.selecting;
+  $('top-bar').hidden = state.selecting;
   if (!state.selecting) return;
   const all = visibleIds.length > 0 && visibleIds.every((id) => state.selected.has(id));
+  const selectAll = () => { state.selected = new Set(all ? [] : visibleIds); rerender(); };
+  const actions = state.tab === 'trash'
+    ? [iconButton('↩', 'Восстановить', bulk(restoreFiles)), iconButton('✕', 'Удалить навсегда', bulk(purgeFiles))]
+    : [
+      iconButton('☆', 'Пометить', bulk((ids) => setStar(ids, true))),
+      iconButton('📁', 'Переместить', bulk(moveFilesTo)),
+      iconButton('🗑', 'В корзину', bulk(trashFiles)),
+      iconButton('⋮', 'Ещё', () => openSheet('', [
+        { icon: '☑', label: all ? 'Снять выделение' : 'Выбрать все', onClick: selectAll },
+        { icon: '#', label: 'Добавить тег', onClick: bulk(addTagTo) },
+        { icon: '★', label: 'Снять пометку', onClick: bulk((ids) => setStar(ids, false)) },
+      ])),
+    ];
   bar.replaceChildren(
-    Object.assign(document.createElement('span'), { textContent: `Выбрано: ${state.selected.size}` }),
-    button(all ? 'Снять всё' : 'Выбрать все', 'secondary', () => { state.selected = new Set(all ? [] : visibleIds); rerender(); }),
-    button('Переместить', '', async () => {
-      const folder = await pickFolder(listFolders(state.index).map((f) => f.folder));
-      if (folder) await applyBulk((idx, ids) => moveEntries(idx, ids, folder), 'Перемещено');
-    }),
-    button('Тег', 'secondary', async () => {
-      const tag = ask('Тег для выбранных');
-      if (tag) await applyBulk((idx, ids) => tagEntries(idx, ids, tag), 'Тег добавлен');
-    }),
-    button('Удалить', 'danger', async () => {
-      const ok = await confirmDialog(`Удалить из драйва: ${state.selected.size}? Файлы останутся в Telegram, исчезнут только из индекса.`, { okText: 'Удалить', destructive: true });
-      if (ok) await applyBulk(deleteEntries, 'Удалено');
-    }),
+    iconButton('✕', 'Выйти из выбора', cancelSelection),
+    el('span', 'select-count', `${state.selected.size} выбрано`),
+    ...actions,
   );
 }

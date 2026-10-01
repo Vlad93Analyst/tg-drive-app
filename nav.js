@@ -1,5 +1,5 @@
 // Навигация между экранами и «хром» Telegram: BackButton (6.1), SettingsButton (7.0), свайпы, нижняя панель.
-import { state } from './state.js';
+import { isInsideFolder, state } from './state.js';
 import { atLeast, setBottomBar, setVerticalSwipes, tg } from './tg.js';
 import { show } from './ui.js';
 
@@ -13,7 +13,7 @@ const GATE_SCREENS = new Set(['token', 'lock', 'denied']);
 
 /** BackButton виден везде, кроме корня списка и экранов-ворот (в режиме выбора он выходит из выбора). */
 export function refreshChrome() {
-  const needsBack = (state.screen !== 'list' && !GATE_SCREENS.has(state.screen)) || state.selecting;
+  const needsBack = (state.screen !== 'list' && !GATE_SCREENS.has(state.screen)) || state.selecting || (state.screen === 'list' && isInsideFolder());
   if (needsBack) tg.BackButton.show(); else tg.BackButton.hide();
 }
 
@@ -29,6 +29,7 @@ export function go(name, arg) {
 
 export function back() {
   if (state.selecting) return screens.list.cancelSelection();
+  if (state.screen === 'list' && isInsideFolder()) { screens.list.up(); return refreshChrome(); }
   return go(state.client ? 'list' : 'token'); // из настроек до ввода токена — обратно на ввод токена
 }
 

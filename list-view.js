@@ -1,65 +1,29 @@
-// Главный экран: поиск, фасеты, список/сетка, группировка по датам, превью, pull-to-refresh.
+// Главный экран: поисковая «пилюля», вкладки, FAB; содержимое вкладок — sections.js.
 import { ALLOWED_USER_IDS, BOT_LINK } from './config.js';
-import { facets, filterFiles, groupByDate, previewFileId, pullFromChat, readIndex, WebhookActiveError } from './core.js';
+import { filterFiles, pullFromChat, readIndex, WebhookActiveError } from './core.js';
+import { parentPath } from './drive.js';
+import { newFolder } from './folder-actions.js';
 import { go, register } from './nav.js';
-import { bindRerender, cancelSelection, renderSelectionBar, startSelection, toggleSelected } from './selection.js';
 import { loadUpdatesOffset, savePref, saveUpdatesOffset } from './prefs.js';
+import { bindRerender, cancelSelection, renderSelectionBar } from './selection.js';
+import { filesSection, homeSection, searchSection, starredSection, trashSection } from './sections.js';
+import { openSheet } from './sheet.js';
 import { state } from './state.js';
-import { haptic } from './tg.js';
-import { $, button, chip, toast, formatDate, formatSize, guard, KIND_ICON, KIND_LABEL } from './ui.js';
+import { haptic, openTelegramLink } from './tg.js';
+import { $, button, el, guard, toast } from './ui.js';
 
-const LONG_PRESS_MS = 500;
+const SECTIONS = { home: () => homeSection(), starred: () => starredSection(render), files: () => filesSection(render, openPath), trash: () => trashSection() };
 
-const toggleFilter = (key, value) => () => { state[key] = state[key] === value ? '' : value; render(); };
+function openPath(path) { state.path = path; render(); window.scrollTo(0, 0); refreshBackButton(); }
+let refreshBackButton = () => {};
 
-function renderFacets() {
-  const f = facets(state.index);
-  const row = (id, items, key, label = (n) => n) => {
-    const el = $(id); el.hidden = items.length < 2 && !state[key];
-    el.replaceChildren(...items.map(({ name, count }) => chip(`${label(name)} ${count}`, state[key] === name, toggleFilter(key, name))));
-  };
-  row('f-folders', f.folders, 'folder');
-  row('f-kinds', f.kinds, 'kind', (n) => `${KIND_ICON[n] ?? ''} ${KIND_LABEL[n] ?? n}`);
-  row('f-tags', f.tags, 'tag', (n) => `#${n}`);
-}
-
-function renderItem(file) {
-  const el = document.createElement('div');
-  el.className = `item${state.selected.has(file.id) ? ' selected' : ''}`;
-  const thumb = document.createElement('div'); thumb.className = 'thumb';
-  thumb.textContent = KIND_ICON[file.kind] ?? '📄';
-  const previewId = previewFileId(file);
-  if (previewId) { const img = document.createElement('img'); img.alt = ''; state.thumbs.attach(img, previewId); thumb.append(img); }
-  if (state.selecting) thumb.append(Object.assign(document.createElement('span'), { className: 'check', textContent: state.selected.has(file.id) ? '✓' : '' }));
-  const title = document.createElement('div'); title.className = 'title'; title.textContent = file.file_name;
-  const meta = document.createElement('small'); meta.textContent = `${formatSize(file.size)} · ${file.folder} · ${formatDate(file.created_at)}`;
-  const text = document.createElement('div'); text.className = 'text'; text.append(title, meta);
-  el.append(thumb, text);
-
-  let timer; let longPressed = false;
-  el.onpointerdown = () => { longPressed = false; timer = setTimeout(() => { longPressed = true; startSelection(file.id); }, LONG_PRESS_MS); };
-  for (const type of ['pointerup', 'pointerleave', 'pointercancel', 'pointermove']) el.addEventListener(type, () => clearTimeout(timer));
-  el.onclick = () => {
-    if (longPressed) return;
-    if (state.selecting) return toggleSelected(file.id);
-    haptic.impact('light'); go('card', file);
-  };
-  return el;
-}
-
-function renderEmpty(totalFiles, shown) {
-  const el = $('empty'); el.hidden = shown > 0; el.replaceChildren();
-  if (shown > 0) return;
-  const p = document.createElement('p');
-  if (!totalFiles) {
-    p.append('Драйв пуст. Пришли любой файл боту ');
-    p.append(Object.assign(document.createElement('a'), { href: BOT_LINK, textContent: '@tdrive_private_bot' }), ' — он появится здесь.');
-    el.append(p);
-    if (!state.pullHidden) el.append(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'перешли файлы боту @tdrive_private_bot, потом нажми' }), button('Забрать из чата с ботом', '', pullChat));
-    return;
-  }
-  p.textContent = 'Ничего не найдено по этим условиям.';
-  el.append(p, chip('Сбросить фильтры', false, () => { Object.assign(state, { folder: '', tag: '', kind: '', q: '' }); $('search').value = ''; render(); }));
+function emptyDrive() {
+  const box = el('div', 'empty');
+  const p = el('p'); p.append('Драйв пуст. Пришли любой файл боту ');
+  p.append(Object.assign(el('a'), { href: BOT_LINK, textContent: '@tdrive_private_bot' }), ' — он появится здесь.');
+  box.append(p);
+  if (!state.pullHidden) box.append(el('p', 'hint', 'перешли файлы боту @tdrive_private_bot, потом нажми'), button('Забрать из чата с ботом', '', pullChat));
+  return box;
 }
 
 // ВРЕМЕННО: удалить после запуска Serverless-бота (см. pullFromChat в core.js).
@@ -78,27 +42,39 @@ async function pullChat() {
   await reload();
 }
 
+function openFab() {
+  haptic.impact('light');
+  openSheet('Добавить', [
+    ...(state.pullHidden ? [] : [{ icon: '📥', label: 'Забрать из чата с ботом', onClick: pullChat }]),
+    { icon: '💬', label: 'Открыть чат с ботом', onClick: () => openTelegramLink('https://t.me/tdrive_private_bot') },
+    { icon: '📁', label: 'Новая папка', onClick: newFolder },
+  ]);
+}
+
 export function render() {
   if (!state.index) return;
-  renderFacets();
-  $('pull-chat').hidden = state.pullHidden;
-  const files = filterFiles(state.index, state);
-  const groups = state.order === 'desc' ? groupByDate(files) : [{ key: 'all', label: '', files }];
-  const container = $('files'); container.className = state.prefs.view === 'grid' ? 'grid' : 'list';
-  container.replaceChildren(...groups.flatMap((g) => [
-    ...(g.label ? [Object.assign(document.createElement('h3'), { className: 'group', textContent: g.label })] : []),
-    ...g.files.map(renderItem),
-  ]));
+  const content = $('content');
+  const nodes = state.q ? searchSection() : state.index.files.length || state.tab === 'files' ? SECTIONS[state.tab]() : [emptyDrive()];
+  content.replaceChildren(...nodes);
   $('skeleton').hidden = true;
   $('view-toggle').textContent = state.prefs.view === 'grid' ? '☰' : '▦';
-  renderEmpty(state.index.files.length, files.length);
-  renderSelectionBar(files.map((f) => f.id));
+  $('fab').hidden = state.selecting || state.tab === 'trash';
+  for (const tab of $('tabs').children) tab.classList.toggle('active', tab.dataset.tab === state.tab);
+  const visible = state.q || state.tab !== 'files' ? filterFiles(state.index, { trashed: state.tab === 'trash', starred: state.tab === 'starred', q: state.q }) : state.index.files.filter((f) => !f.trashed_at && f.folder === state.path);
+  renderSelectionBar(visible.map((f) => f.id));
 }
 
 export async function reload() {
   if (!state.index) $('skeleton').hidden = false;
   state.index = await readIndex(state.transport);
   render();
+}
+
+function selectTab(tab) {
+  if (state.selecting) cancelSelection();
+  if (state.tab === tab && tab === 'files') state.path = ''; // повторный тап по «Файлы» — в корень
+  state.tab = tab; state.q = ''; $('search').value = '';
+  haptic.select(); render(); window.scrollTo(0, 0); refreshBackButton();
 }
 
 function initPullToRefresh() {
@@ -115,18 +91,22 @@ function initPullToRefresh() {
   }));
 }
 
-export function initList() {
+export function initList(onBackChanged) {
+  refreshBackButton = onBackChanged;
+  state.onChange = render;
   bindRerender(render);
-  register('list', { enter: guard(reload), cancelSelection });
+  register('list', {
+    enter: guard(async () => (state.index ? render() : reload())),
+    cancelSelection,
+    up: () => openPath(parentPath(state.path)),
+  });
   let timer;
-  $('search').oninput = (e) => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); render(); }, 250); };
-  $('order').onchange = (e) => { state.order = e.target.value; render(); };
-  $('refresh').onclick = guard(async () => { haptic.impact('light'); await reload(); });
-  $('pull-chat').onclick = guard(pullChat);
-  $('select-toggle').onclick = () => (state.selecting ? cancelSelection() : startSelection());
+  $('search').oninput = (e) => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); render(); refreshBackButton(); }, 250); };
+  for (const tab of $('tabs').children) tab.onclick = () => selectTab(tab.dataset.tab);
+  $('fab').onclick = openFab;
+  $('avatar').onclick = () => go('settings');
   $('view-toggle').onclick = guard(async () => {
     await savePref(state.prefs, 'view', state.prefs.view === 'grid' ? 'list' : 'grid'); haptic.select(); render();
   });
-  $('open-settings').onclick = () => go('settings');
   initPullToRefresh();
 }

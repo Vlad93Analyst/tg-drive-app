@@ -1,12 +1,13 @@
 // Точка входа Mini App: инициализация Telegram, предпочтений, темы и маршрут «доступ -> биометрия -> токен -> список».
-// Vanilla ES modules без сборки. Пустые папки не поддерживаются: папка = строка в записи.
+// Vanilla ES modules без сборки. Папка = путь `a/b/c` в поле folder + словарь folders в индексе (цвет, пустые папки).
 import { biometricSupported } from './biometric.js';
 import { createBotClient, normalizeToken } from './botapi.js';
 import { ALLOWED_USER_IDS } from './config.js';
 import { isAllowed, pinnedIndexTransport } from './core.js';
 import { initCard } from './card-view.js';
 import { initList } from './list-view.js';
-import { go, initChrome } from './nav.js';
+import { go, initChrome, refreshChrome } from './nav.js';
+import { initSheet } from './sheet.js';
 import { loadPrefs } from './prefs.js';
 import { initSettings, unlock } from './settings-view.js';
 import { state } from './state.js';
@@ -58,7 +59,7 @@ $('token-save').onclick = guard(async () => {
   await start(token);
 });
 
-initList(); initCard(); initSettings(); initChrome();
+initSheet(); initList(refreshChrome); initCard(); initSettings(); initChrome();
 for (const event of ['safeAreaChanged', 'contentSafeAreaChanged', 'viewportChanged']) tg.onEvent(event, applyInsets);
 tg.onEvent('themeChanged', () => applyTheme(state.prefs.theme));
 

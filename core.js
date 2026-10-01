@@ -69,14 +69,26 @@ export function extractFile(msg) {
 
 // ---------- операции над индексом (чистые: возвращают новый индекс, rev не трогают) ----------
 
-export const emptyIndex = () => ({ version: 1, rev: 0, updated_at: null, files: [] });
+export const INDEX_VERSION = 2;
+export const emptyIndex = () => ({ version: INDEX_VERSION, rev: 0, updated_at: null, folders: {}, files: [] });
+
+// Поля v2 у файла: звезда, мягкое удаление (unix-секунды), последнее открытие (для «Недавних»).
+const FILE_DEFAULTS = { starred: false, trashed_at: null, opened_at: null };
+
+/** v1 -> v2 при чтении: чистая, идемпотентная; папка Inbox остаётся, словарь `folders` ({путь: {color}}) пуст. */
+export function migrateIndex(index) {
+  if (index.version >= INDEX_VERSION) return index;
+  return { ...index, version: INDEX_VERSION, folders: index.folders ?? {}, files: index.files.map((f) => ({ ...FILE_DEFAULTS, ...f })) };
+}
+
+export const isTrashed = (file) => Boolean(file.trashed_at);
 
 /** Dedup по file_unique_id. */
 export function addEntry(index, entry) {
   const existing = index.files.find((f) => f.file_unique_id === entry.file_unique_id);
   if (existing) return { index, created: false, entry: existing };
   const id = index.files.reduce((max, f) => Math.max(max, f.id), 0) + 1;
-  const added = { id, ...entry };
+  const added = { id, ...FILE_DEFAULTS, ...entry };
   return { index: { ...index, files: [...index.files, added] }, created: true, entry: added };
 }
 
@@ -85,13 +97,14 @@ function mapEntry(index, id, change) {
   return { ...index, files: index.files.map((f) => (f.id === id ? change(f) : f)) };
 }
 
+export const FOLDER_PATH_MAX = 200; // путь `a/b/c` целиком
 const clean = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : undefined);
 
 /** Меняет имя/папку/заметку; пустые имя и папка игнорируются. null — файла нет. */
 export function updateEntry(index, id, patch) {
   const next = {
     file_name: clean(patch.file_name, 200) || undefined,
-    folder: clean(patch.folder, 60) || undefined,
+    folder: clean(patch.folder, FOLDER_PATH_MAX) || undefined,
     note: clean(patch.note, 2000),
   };
   return mapEntry(index, id, (f) => ({ ...f, ...Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined)) }));
@@ -108,9 +121,12 @@ export const removeTag = (index, id, tag) => mapEntry(index, id, (f) => ({ ...f,
 export const deleteEntry = (index, id) =>
   index.files.some((f) => f.id === id) ? { ...index, files: index.files.filter((f) => f.id !== id) } : null;
 
-export function filterFiles(index, { folder, tag, kind, q, order = 'desc', limit } = {}) {
+/** Корзина по умолчанию скрыта (бот, inline, /find); `trashed: true` — только корзина. */
+export function filterFiles(index, { folder, tag, kind, q, starred, trashed = false, order = 'desc', limit } = {}) {
   const needle = q?.trim().toLowerCase();
   const matches = index.files.filter((f) =>
+    isTrashed(f) === trashed &&
+    (!starred || f.starred) &&
     (!folder || f.folder === folder) &&
     (!tag || f.tags.includes(tag)) &&
     (!kind || f.kind === kind) &&
@@ -131,7 +147,7 @@ export function parseIdQuery(q) {
 /** Поиск для inline/бота: `id:<n>` -> один файл, иначе обычная фильтрация по тексту. */
 export function searchFiles(index, query, limit) {
   const id = parseIdQuery(query);
-  if (id !== null) return index.files.filter((f) => f.id === id);
+  if (id !== null) return index.files.filter((f) => f.id === id && !isTrashed(f));
   return filterFiles(index, { q: query, limit });
 }
 
@@ -170,10 +186,11 @@ export function facets(index) {
     for (const v of values) m.set(v, (m.get(v) ?? 0) + 1);
     return [...m].map(([name, n]) => ({ name, count: n })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   };
+  const live = index.files.filter((f) => !isTrashed(f));
   return {
-    folders: count(index.files.map((f) => f.folder)),
-    tags: count(index.files.flatMap((f) => f.tags)),
-    kinds: count(index.files.map((f) => f.kind)),
+    folders: count(live.map((f) => f.folder)),
+    tags: count(live.flatMap((f) => f.tags)),
+    kinds: count(live.map((f) => f.kind)),
   };
 }
 
@@ -215,7 +232,7 @@ export function preparedMessageParams(file, userId) {
 
 export function listFolders(index) {
   const counts = new Map();
-  for (const f of index.files) counts.set(f.folder, (counts.get(f.folder) ?? 0) + 1);
+  for (const f of index.files.filter((x) => !isTrashed(x))) counts.set(f.folder, (counts.get(f.folder) ?? 0) + 1);
   return [...counts].map(([folder, count]) => ({ folder, count })).sort((a, b) => a.folder.localeCompare(b.folder));
 }
 
@@ -293,7 +310,8 @@ export function pinnedIndexTransport({ call, getFileBytes, chatId }) {
 }
 
 export async function readIndex(transport) {
-  return (await transport.read())?.index ?? emptyIndex();
+  const current = (await transport.read())?.index;
+  return current ? migrateIndex(current) : emptyIndex();
 }
 
 /**
@@ -306,7 +324,7 @@ export async function readIndex(transport) {
 export async function mutateIndex(transport, change, { maxAttempts = 3, now = () => new Date().toISOString() } = {}) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const current = await transport.read();
-    const base = current?.index ?? emptyIndex();
+    const base = current ? migrateIndex(current.index) : emptyIndex();
     const next = change(base);
     if (!next) return { index: base, changed: false };
     const fresh = await transport.read();
