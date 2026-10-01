@@ -1,5 +1,5 @@
 // Клиент Bot API из браузера. api.telegram.org отвечает CORS `*`, но на preflight (OPTIONS) даёт 501,
-// поэтому ТОЛЬКО simple requests: POST с FormData, без headers (никакого application/json),
+// поэтому ТОЛЬКО simple requests: POST с urlencoded/FormData, без headers (никакого application/json),
 // вложенные объекты — JSON-строкой в поле формы; скачивание — простой GET.
 const API = 'https://api.telegram.org';
 
@@ -25,11 +25,23 @@ export function toFormData(params, files = {}) {
   return form;
 }
 
+/** multipart — только когда есть файлы: пустой multipart (WebKit шлёт одну закрывающую границу)
+ * Bot API отвергает HTTP 400 без JSON. Без файлов — urlencoded, тоже simple request. */
+export function toRequestBody(params, files = {}) {
+  if (Object.keys(files).length) return toFormData(params, files);
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    body.append(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+  }
+  return body;
+}
+
 export function createBotClient(token, fetchImpl = (...args) => fetch(...args)) {
   async function call(method, params = {}, files = {}) {
     let response;
     try {
-      response = await fetchImpl(`${API}/bot${token}/${method}`, { method: 'POST', body: toFormData(params, files) });
+      response = await fetchImpl(`${API}/bot${token}/${method}`, { method: 'POST', body: toRequestBody(params, files) });
     } catch (e) {
       throw new BotApiError(`${method}: сеть — ${e.message}`);
     }
