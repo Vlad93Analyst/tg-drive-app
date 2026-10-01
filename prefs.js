@@ -26,3 +26,14 @@ export async function savePref(prefs, key, value) {
   if (useDevice()) return promisify((cb) => tg.DeviceStorage.setItem(PREFIX + key, value, cb));
   localStorage.setItem(PREFIX + key, value);
 }
+
+// ВРЕМЕННО (вместе с pullFromChat): последний подтверждённый update_id для getUpdates.
+const OFFSET_KEY = 'updates_offset';
+export async function loadUpdatesOffset() {
+  const raw = await read(OFFSET_KEY);
+  return raw ? Number(raw) : null;
+}
+export async function saveUpdatesOffset(value) {
+  if (useDevice()) return promisify((cb) => tg.DeviceStorage.setItem(PREFIX + OFFSET_KEY, String(value), cb));
+  localStorage.setItem(PREFIX + OFFSET_KEY, String(value));
+}

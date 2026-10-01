@@ -1,12 +1,12 @@
 // Главный экран: поиск, фасеты, список/сетка, группировка по датам, превью, pull-to-refresh.
-import { BOT_LINK } from './config.js';
-import { facets, filterFiles, groupByDate, previewFileId, readIndex } from './core.js';
+import { ALLOWED_USER_IDS, BOT_LINK } from './config.js';
+import { facets, filterFiles, groupByDate, previewFileId, pullFromChat, readIndex, WebhookActiveError } from './core.js';
 import { go, register } from './nav.js';
 import { bindRerender, cancelSelection, renderSelectionBar, startSelection, toggleSelected } from './selection.js';
-import { savePref } from './prefs.js';
+import { loadUpdatesOffset, savePref, saveUpdatesOffset } from './prefs.js';
 import { state } from './state.js';
 import { haptic } from './tg.js';
-import { $, chip, formatDate, formatSize, guard, KIND_ICON, KIND_LABEL } from './ui.js';
+import { $, button, chip, toast, formatDate, formatSize, guard, KIND_ICON, KIND_LABEL } from './ui.js';
 
 const LONG_PRESS_MS = 500;
 
@@ -55,15 +55,33 @@ function renderEmpty(totalFiles, shown) {
     p.append('Драйв пуст. Пришли любой файл боту ');
     p.append(Object.assign(document.createElement('a'), { href: BOT_LINK, textContent: '@tdrive_private_bot' }), ' — он появится здесь.');
     el.append(p);
+    if (!state.pullHidden) el.append(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'перешли файлы боту @tdrive_private_bot, потом нажми' }), button('Забрать из чата с ботом', '', pullChat));
     return;
   }
   p.textContent = 'Ничего не найдено по этим условиям.';
   el.append(p, chip('Сбросить фильтры', false, () => { Object.assign(state, { folder: '', tag: '', kind: '', q: '' }); $('search').value = ''; render(); }));
 }
 
+// ВРЕМЕННО: удалить после запуска Serverless-бота (см. pullFromChat в core.js).
+async function pullChat() {
+  haptic.impact('light');
+  try {
+    const { added, duplicates } = await pullFromChat({
+      call: state.client.call, transport: state.transport, allowedIds: ALLOWED_USER_IDS,
+      loadOffset: loadUpdatesOffset, saveOffset: saveUpdatesOffset,
+    });
+    toast(`Добавлено ${added}, уже были ${duplicates}`);
+  } catch (e) {
+    if (!(e instanceof WebhookActiveError)) throw e;
+    state.pullHidden = true; toast(e.message);
+  }
+  await reload();
+}
+
 export function render() {
   if (!state.index) return;
   renderFacets();
+  $('pull-chat').hidden = state.pullHidden;
   const files = filterFiles(state.index, state);
   const groups = state.order === 'desc' ? groupByDate(files) : [{ key: 'all', label: '', files }];
   const container = $('files'); container.className = state.prefs.view === 'grid' ? 'grid' : 'list';
@@ -104,6 +122,7 @@ export function initList() {
   $('search').oninput = (e) => { clearTimeout(timer); timer = setTimeout(() => { state.q = e.target.value.trim(); render(); }, 250); };
   $('order').onchange = (e) => { state.order = e.target.value; render(); };
   $('refresh').onclick = guard(async () => { haptic.impact('light'); await reload(); });
+  $('pull-chat').onclick = guard(pullChat);
   $('select-toggle').onclick = () => (state.selecting ? cancelSelection() : startSelection());
   $('view-toggle').onclick = guard(async () => {
     await savePref(state.prefs, 'view', state.prefs.view === 'grid' ? 'list' : 'grid'); haptic.select(); render();

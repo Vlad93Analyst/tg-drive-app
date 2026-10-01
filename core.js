@@ -317,3 +317,60 @@ export async function mutateIndex(transport, change, { maxAttempts = 3, now = ()
   }
   throw new Error('index write conflict: rev kept changing');
 }
+
+// ---------- ВРЕМЕННО: приём файлов через getUpdates ----------
+// Удалить после запуска Serverless-бота (он принимает файлы сам, а вебхук делает getUpdates недоступным):
+// pullFromChat, WebhookActiveError, PULL_* и кнопка «Забрать из чата с ботом» в webapp/list-view.js.
+
+export class WebhookActiveError extends Error {}
+
+export const PULL_PAGE_LIMIT = 100; // потолок Bot API: до 100 апдейтов за вызов
+export const PULL_MAX_PAGES = 50; // защита от бесконечного цикла: 5000 апдейтов за нажатие, остальное — следующим нажатием
+
+/** Файлы от whitelisted-пользователя; сообщения ботов и текст (extractFile вернул null) пропускаются. */
+export function filesFromUpdates(updates, allowedIds) {
+  return updates
+    .filter((u) => u.message && !u.message.from?.is_bot && isAllowed(u.message.from?.id, allowedIds))
+    .sort((a, b) => a.update_id - b.update_id)
+    .map((u) => extractFile(u.message))
+    .filter(Boolean);
+}
+
+/**
+ * Забирает файлы из чата с ботом: страница апдейтов -> ОДНА запись индекса -> только потом подтверждение.
+ * Порядок критичен: getUpdates с offset=max+1 удаляет апдейты на стороне Telegram (иначе они хранятся сутки).
+ * Подтвердили бы до записи — при ошибке записи файлы пропали бы. Поэтому и пагинация постраничная:
+ * следующая страница запрашивается с offset предыдущей, то есть подтверждать приходится по ходу, но всегда после записи.
+ * `call(method, params)` — Bot API, `loadOffset()/saveOffset(n)` — хранилище последнего подтверждённого update_id.
+ */
+export async function pullFromChat({ call, transport, allowedIds, loadOffset, saveOffset, maxPages = PULL_MAX_PAGES }) {
+  let added = 0;
+  let duplicates = 0;
+  for (let page = 0; page < maxPages; page++) {
+    const saved = await loadOffset();
+    let updates;
+    try {
+      updates = await call('getUpdates', { ...(saved == null ? {} : { offset: saved + 1 }), limit: PULL_PAGE_LIMIT, timeout: 0, allowed_updates: ['message'] });
+    } catch (e) {
+      if (/conflict/i.test(e.message) && /webhook/i.test(e.message)) throw new WebhookActiveError('приём файлов теперь делает бот, кнопка больше не нужна');
+      throw e;
+    }
+    if (!updates.length) break;
+    const files = filesFromUpdates(updates, allowedIds);
+    if (files.length) {
+      let created = 0; // change может перезапуститься при конфликте rev — считаем заново
+      await mutateIndex(transport, (index) => {
+        created = 0;
+        const next = files.reduce((acc, file) => { const r = addEntry(acc, file); if (r.created) created++; return r.index; }, index);
+        return created ? next : null;
+      });
+      added += created;
+      duplicates += files.length - created;
+    }
+    const max = Math.max(...updates.map((u) => u.update_id));
+    await saveOffset(max);
+    await call('getUpdates', { offset: max + 1, limit: 1, timeout: 0, allowed_updates: ['message'] });
+    if (updates.length < PULL_PAGE_LIMIT) break;
+  }
+  return { added, duplicates };
+}
